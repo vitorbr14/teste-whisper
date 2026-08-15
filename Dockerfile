@@ -17,9 +17,6 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-# cuBLAS/cuDNN via pip: o ctranslate2 (usado pelo faster-whisper) carrega essas
-# libs em runtime, então não precisamos da imagem nvidia/cuda "runtime" inteira
-# (isso sozinho economiza uns 2-3GB em relação à base cudnn-runtime).
 RUN pip install --upgrade pip \
     && pip install nvidia-cublas-cu12 nvidia-cudnn-cu12==9.* \
     && pip install -r requirements.txt
@@ -34,7 +31,10 @@ COPY handler.py .
 
 # Área de trabalho do worker
 RUN mkdir -p /workspace
+
+# Áudio temporário APENAS para este teste
+COPY emo.mp3 /workspace/emo.mp3
+
 WORKDIR /workspace
 
-# Inicia o worker Serverless e fica esperando jobs
 ENTRYPOINT ["python", "/app/handler.py"]
