@@ -26,14 +26,13 @@ ENV LD_LIBRARY_PATH="/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/
 # Core da transcrição
 COPY pipeline.py .
 
-# Interface entre a RunPod Serverless e o pipeline
+# Cliente do Google Drive
+COPY drive_client.py .
+
+# Interface entre RunPod Serverless e o pipeline
 COPY handler.py .
 
-# Área de trabalho do worker
 RUN mkdir -p /workspace
-
-# Áudio temporário APENAS para este teste
-COPY emo.mp3 /workspace/emo.mp3
 
 WORKDIR /workspace
 
