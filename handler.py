@@ -1,28 +1,26 @@
+"""Entrypoint do worker RunPod Serverless.
+
+Só orquestra: baixa o original do Drive, chama o pipeline de
+transcrição/tradução (worker/pipeline.py, não implementado aqui) e sobe o
+.srt resultante de volta pro Drive. Nenhuma lógica de negócio própria —
+download, transcrição e upload vivem cada um no seu módulo.
+
+Não deleta nem move o áudio original (etapa futura, fora deste arquivo).
+"""
+
 import runpod
 
-from drive_client import baixar_do_drive
+from drive_client import baixar_do_drive, subir_para_drive
 from pipeline import transcribe_file
 
 
 def handler(job):
-    job_input = job.get("input", {})
-
+    job_input = job["input"]
     file_id = job_input["file_id"]
     file_name = job_input["file_name"]
 
-    print(
-        f"Arquivo que disparou o job: "
-        f"{file_name} "
-        f"({file_id})"
-    )
+    input_file = baixar_do_drive(file_id=file_id, file_name=file_name)
 
-    # Baixa o arquivo real do Google Drive para /workspace
-    input_file = baixar_do_drive(
-        file_id=file_id,
-        file_name=file_name,
-    )
-
-    # Transcreve o arquivo baixado
     result = transcribe_file(
         input_file=input_file,
         model_name="large-v3",
@@ -30,9 +28,15 @@ def handler(job):
         force=True,
     )
 
+    srt_path = result.get("srt_path")
+    if not srt_path:
+        raise RuntimeError(
+            "transcribe_file não retornou srt_path (transcrição falhou?)"
+        )
+
+    result["srt_drive_id"] = subir_para_drive(srt_path)
+
     return result
 
 
-runpod.serverless.start({
-    "handler": handler
-})
+runpod.serverless.start({"handler": handler})
