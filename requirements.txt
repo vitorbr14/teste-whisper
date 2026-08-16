@@ -1,2 +1,6 @@
 faster-whisper>=1.0.0,<2
 runpod
+
+google-api-python-client
+google-auth
+google-auth-httplib2
