@@ -186,9 +186,17 @@ def transcribe_chunk(
         segments, info = model.transcribe(
             str(chunk_file),
             language=LANGUAGE,
-            beam_size=5,
+            beam_size=10,
+            # beam_size=5,
             vad_filter=True,
-            condition_on_previous_text=False,
+            condition_on_previous_text=True,
+            initial_prompt=(
+    "これはLiella!、ラブライブ！スーパースター!!、Love Live!に関する日本語の会話です。"
+    "出演者や声優、メンバーの名前、愛称、グループ名が頻繁に登場します。"
+    "Liella!、Aqours、ラブライブ！、ラブライブ！スーパースター!!、"
+    "絵森彩、Aya Emori、Emori Aya、えもりん、エモリン。"
+    "自然な日本語の会話で、声優、ライブ、イベント、アニメ、楽曲について話すことがあります。"
+)
         )
 
         raw_segments = list(segments)
