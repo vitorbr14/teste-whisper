@@ -39,6 +39,14 @@ MEDIA_EXTENSIONS = {
 }
 
 
+# Parâmetros de resegmentação de legendas (ajustáveis)
+MAX_CAPTION_CHARS = 40          # nº máx. de caracteres por legenda
+MAX_CAPTION_DURATION = 6.0      # duração máx. de uma legenda, em segundos
+MIN_PAUSE_FOR_BREAK = 0.5       # gap mínimo (s) entre palavras p/ considerar corte natural
+SENTENCE_END_CHARS = "。！？.!?"
+CLAUSE_BREAK_CHARS = "、,，"
+
+
 # ---------------------------------------------------------------------------
 # Núcleo de transcrição (reutilizável — sem input(), sem argparse, sem tradução)
 # ---------------------------------------------------------------------------
@@ -169,6 +177,104 @@ def chunk_audio(audio_file: Path, chunks_dir: Path, chunk_seconds: int, force: b
     return chunks
 
 
+# ---------------------------------------------------------------------------
+# Resegmentação de legendas (quebra segmentos grandes usando word timestamps)
+# ---------------------------------------------------------------------------
+
+
+def _split_words_into_groups(
+    words: list[dict],
+    max_chars: int = MAX_CAPTION_CHARS,
+    max_duration: float = MAX_CAPTION_DURATION,
+    pause_threshold: float = MIN_PAUSE_FOR_BREAK,
+) -> list[list[dict]]:
+    """Agrupa palavras (start/end/word) em blocos respeitando os limites de
+    caracteres e duração, preferindo cortar em pontuação ou pausas naturais."""
+
+    if not words:
+        return []
+
+    n = len(words)
+    groups = []
+    start = 0
+    last_break = None
+    i = 0
+
+    while i < n:
+        text_len = sum(len(w["word"]) for w in words[start:i + 1])
+        duration = words[i]["end"] - words[start]["start"]
+
+        if i > start and (text_len > max_chars or duration > max_duration):
+            cut = last_break if last_break is not None else i - 1
+            groups.append(words[start:cut + 1])
+            start = cut + 1
+            last_break = None
+            continue
+
+        word_text = words[i]["word"]
+        ends_sentence = bool(word_text) and word_text[-1] in SENTENCE_END_CHARS
+        ends_clause = bool(word_text) and word_text[-1] in CLAUSE_BREAK_CHARS
+        gap_after = words[i + 1]["start"] - words[i]["end"] if i + 1 < n else None
+        has_pause_after = gap_after is not None and gap_after >= pause_threshold
+
+        if ends_sentence or ends_clause or has_pause_after:
+            last_break = i
+
+        i += 1
+
+    if start < n:
+        groups.append(words[start:])
+
+    return groups
+
+
+def _words_to_caption(group: list[dict]) -> dict:
+    """Reconstrói uma legenda a partir de um grupo de palavras. A concatenação
+    direta (sem espaço) é intencional: no faster-whisper cada word.word já
+    vem com o espaçamento correto embutido (japonês normalmente não usa
+    espaço entre palavras)."""
+
+    return {
+        "start": group[0]["start"],
+        "end": group[-1]["end"],
+        "text": "".join(w["word"] for w in group).strip(),
+    }
+
+
+def resegment_into_captions(
+    segments,
+    max_chars: int = MAX_CAPTION_CHARS,
+    max_duration: float = MAX_CAPTION_DURATION,
+    pause_threshold: float = MIN_PAUSE_FOR_BREAK,
+) -> list[dict]:
+    """Recebe os Segment do faster-whisper (com word_timestamps=True) e
+    devolve uma lista plana de legendas {start, end, text}, quebrando
+    segmentos grandes em legendas menores a partir dos timestamps de
+    palavra. Segmentos já dentro dos limites não são fragmentados."""
+
+    captions = []
+
+    for segment in segments:
+        text = segment.text.strip()
+
+        if not text:
+            continue
+
+        words = segment.words or []
+        segment_duration = segment.end - segment.start
+
+        if not words or (len(text) <= max_chars and segment_duration <= max_duration):
+            captions.append({"start": segment.start, "end": segment.end, "text": text})
+            continue
+
+        word_dicts = [{"start": w.start, "end": w.end, "word": w.word} for w in words]
+
+        for group in _split_words_into_groups(word_dicts, max_chars, max_duration, pause_threshold):
+            captions.append(_words_to_caption(group))
+
+    return captions
+
+
 def transcribe_chunk(
     model: WhisperModel,
     chunk_file: Path,
@@ -189,6 +295,7 @@ def transcribe_chunk(
             beam_size=10,
             # beam_size=5,
             vad_filter=True,
+            word_timestamps=True,
             condition_on_previous_text=True,
             initial_prompt=(
     "これはLiella!、ラブライブ！スーパースター!!、Love Live!に関する日本語の会話です。"
@@ -201,28 +308,18 @@ def transcribe_chunk(
 
         raw_segments = list(segments)
 
-        local_segments = []
-        global_segments = []
-
         offset = chunk_index * chunk_seconds
 
-        for segment in raw_segments:
-            text = segment.text.strip()
+        local_segments = resegment_into_captions(raw_segments)
 
-            if not text:
-                continue
-
-            local_segments.append({
-                "start": segment.start,
-                "end": segment.end,
-                "text": text,
-            })
-
-            global_segments.append({
-                "start": segment.start + offset,
-                "end": segment.end + offset,
-                "text": text,
-            })
+        global_segments = [
+            {
+                "start": caption["start"] + offset,
+                "end": caption["end"] + offset,
+                "text": caption["text"],
+            }
+            for caption in local_segments
+        ]
 
         write_srt(chunk_srt_file, local_segments)
 
