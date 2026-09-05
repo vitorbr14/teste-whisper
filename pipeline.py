@@ -294,7 +294,7 @@ def transcribe_chunk(
             language=LANGUAGE,
             beam_size=10,
             # beam_size=5,
-            vad_filter=True,
+            vad_filter=False,
             word_timestamps=True,
             condition_on_previous_text=True,
             initial_prompt=(
